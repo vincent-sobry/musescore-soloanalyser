@@ -42,24 +42,4 @@ MuseScore {
         Core.clearAnalyse();
     }
 
-    Settings {
-        id: settings
-        category: "SoloAnalyser"
-        // in options
-        property var rootColor
-        property var bassColor
-        property var chordColor
-        property var scaleColor
-        property var errorColor
-        property var alteredColor
-        property var colorNotes
-        property var nameNotes
-		property var textType
-		property var useBelowSymbols
-		property var useAboveSymbols
-		property var lookAhead
-		property var lookBack
-		property var ignoreBrackettedChords
-    }
-
 }
