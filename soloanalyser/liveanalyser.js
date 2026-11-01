@@ -6,6 +6,7 @@
 /* Requires "notehelper.js" as NoteHelper and "chordanalyser.js" as ChordHelper in the importing QML.
 /* ChangeLog:
 /*  - 1.0.0: Initial version
+/*  - 1.1.0: Parts can be excluded from the analyse; beats of the bars; short part names
 /**********************************************/
 
 // Parsed chords, by chord symbol text. ChordHelper.chordFromText is costly and verbose, and the
@@ -20,28 +21,92 @@ function parseChord(text) {
 }
 
 /**
-* Returns the tick of the first selected element, or -1 if nothing is selected.
+* The position of the selection: {tick, note}, tick -1 when nothing is selected,
+* note the selected note, if any (null otherwise).
 */
-function getSelectionTick() {
-    if (!curScore) return -1;
+function getSelection() {
+    var res = {
+        "tick": -1,
+        "note": null
+    };
+    if (!curScore) return res;
     var sel = curScore.selection;
-    if (sel.isRange && sel.startSegment) return sel.startSegment.tick;
+    if (sel.isRange && sel.startSegment) {
+        res.tick = sel.startSegment.tick;
+        return res;
+    }
     var els = sel.elements;
     for (var i = 0; i < els.length; i++) {
         var el = els[i];
+        if (el.type === Element.NOTE) res.note = el;
         while (el && el.type !== Element.SEGMENT) {
             el = el.parent;
         }
-        if (el) return el.tick;
+        if (el) {
+            res.tick = el.tick;
+            return res;
+        }
     }
-    return -1;
+    return res;
+}
+
+/**
+* The parts of the score, with a key that identifies them across sessions: the part name, numbered
+* when several parts have the same name (part indexes and tracks change when instruments are added).
+* @return [{key, name, shortName, drum, startTrack, endTrack}]
+*/
+function getParts() {
+    var res = [];
+    if (!curScore) return res;
+    var count = {};
+    var countShort = {};
+    for (var p = 0; p < curScore.parts.length; p++) {
+        var part = curScore.parts[p];
+        var name = part.longName || part.partName || ("Part " + (p + 1));
+        var shortName = part.shortName || name;
+        count[name] = (count[name] || 0) + 1;
+        countShort[shortName] = (countShort[shortName] || 0) + 1;
+        res.push({
+            "key": name + "#" + count[name],
+            "name": (count[name] > 1) ? name + " " + count[name] : name,
+            "shortName": (countShort[shortName] > 1) ? shortName + " " + countShort[shortName] : shortName,
+            "drum": part.hasDrumStaff,
+            "startTrack": part.startTrack,
+            "endTrack": part.endTrack
+        });
+    }
+    return res;
+}
+
+/**
+* Length and beats of a measure, in ticks (a quarter note is 480 ticks).
+* The beat is the denominator of the time signature, or a dotted note in compound metres (6/8, 9/8, 12/8...).
+* @return {length, beat}
+*/
+function measureBeats(m, nextTick) {
+    var num = 4;
+    var den = 4;
+    var ts = m.timesigNominal;
+    if (ts && ts.numerator > 0 && ts.denominator > 0) {
+        num = ts.numerator;
+        den = ts.denominator;
+    }
+    var beat = 1920 / den;
+    if (den >= 8 && num > 3 && num % 3 === 0) beat *= 3;
+    var length = (m.ticks && m.ticks.ticks > 0) ? m.ticks.ticks : (nextTick !== null ? nextTick - m.firstSegment.tick : num * 1920 / den);
+    return {
+        "length": length,
+        "beat": beat
+    };
 }
 
 /**
 * Analyse the bar at a given tick, or the whole score.
 * @param focusTick  the tick of the bar to analyse (-1: first bar)
-* @param options    {wholeScore, useAboveSymbols, useBelowSymbols, lookAhead, ignoreBrackettedChords}
-* @return {key, bars: [{number, chords: [string], staves: [{name, events: [{chordRest, chord, chordName, notes: [{note, name, degree, category, explicitOutside}]}]}]}]}
+* @param options    {wholeScore, useAboveSymbols, useBelowSymbols, lookAhead, ignoreBrackettedChords,
+*                   excludedParts: [part keys, see getParts()] not analysed (their chord symbols are still used)}
+* @return {key, bars: [{number, chords: [string], beats: [{tick, chords: [string]}],
+*           staves: [{name, events: [{tick, chordRest, chord, chordName, notes: [{note, name, degree, category, explicitOutside}]}]}]}]}
 *   key is a fingerprint of everything the result depends on, so that the caller can skip rendering when nothing changed.
 */
 function analyse(focusTick, options) {
@@ -114,24 +179,26 @@ function analyse(focusTick, options) {
         }
     }
 
-    // 3) Staves to analyse (no drum staves)
+    // 3) Staves to analyse (no drum staves, no excluded parts)
+    var parts = getParts();
+    var excluded = options.excludedParts || [];
     var staves = [];
     for (var s = 0; s < nstaves; s++) {
         var name = "Staff " + (s + 1);
-        var drum = false;
+        var skip = false;
         var partIdx = -1;
-        for (var p = 0; p < curScore.parts.length; p++) {
-            var part = curScore.parts[p];
+        for (var p = 0; p < parts.length; p++) {
+            var part = parts[p];
             if (s * 4 >= part.startTrack && s * 4 < part.endTrack) {
-                name = part.longName || part.partName || name;
-                drum = part.hasDrumStaff;
+                name = part.shortName;
+                skip = part.drum || excluded.indexOf(part.key) >= 0;
                 partIdx = p;
                 break;
             }
         }
         staves.push({
             "name": name,
-            "drum": drum,
+            "skip": skip,
             "part": partIdx,
             "signature": []
         });
@@ -142,9 +209,21 @@ function analyse(focusTick, options) {
     for (var b = first; b <= last; b++) {
         var barStart = measures[b].tick;
         var barEnd = (b + 1 < measures.length) ? measures[b + 1].tick : Infinity;
+        var mb = measureBeats(measures[b].measure, (b + 1 < measures.length) ? barEnd : null);
+        key.push(mb.length + "/" + mb.beat);
+        var nbeats = Math.max(1, Math.ceil(mb.length / mb.beat));
+        var beats = [];
+        for (var i = 0; i < nbeats; i++) {
+            var bt = barStart + i * mb.beat;
+            beats.push({
+                "tick": bt,
+                "chords": chordNamesBetween(byStaff, bt, Math.min(bt + mb.beat, barEnd))
+            });
+        }
         bars.push({
             "number": measures[b].number,
             "chords": chordNamesBetween(byStaff, barStart, barEnd),
+            "beats": beats,
             "staves": staves.map(function () {
                 return {
                     "events": []
@@ -158,7 +237,7 @@ function analyse(focusTick, options) {
         var bar = bars[segments[g].bar];
         for (var t = 0; t < ntracks; t++) {
             var s = (t / 4) | 0;
-            if (staves[s].drum) continue;
+            if (staves[s].skip) continue;
             var el = seg.elementAt(t);
             if (!el || el.type !== Element.CHORD) continue;
             var curChord = chordAt(byStaff[s], seg.tick, options.lookAhead);
@@ -177,6 +256,7 @@ function analyse(focusTick, options) {
             var chordName = (curChord !== null) ? curChord.name : null;
             var prev = (events.length > 0) ? events[events.length - 1] : null;
             events.push({
+                "tick": seg.tick,
                 "chordRest": el,
                 "chord": (prev === null || prev.chordName !== chordName) ? chordName : null,
                 "chordName": chordName,
@@ -467,16 +547,23 @@ function normalizeColor(c) {
 * and the note colours that are one of the analyse colours (other colours are kept). One undo step,
 * or none when there is nothing to remove.
 * @param colors     the analyse colours
+* @param partKeys   optional: only clear these parts (keys of getParts())
 * @return the number of notes and chords modified
 */
-function clearScore(colors) {
+function clearScore(colors, partKeys) {
     if (!curScore || !curScore.firstMeasure) return 0;
     var palette = colors.map(normalizeColor);
     var changes = [];
     var ntracks = curScore.ntracks;
+    var tracks = [];
+    getParts().forEach(function (part) {
+        if (partKeys && partKeys.indexOf(part.key) < 0) return;
+        for (var t = part.startTrack; t < part.endTrack && t < ntracks; t++) tracks.push(t);
+    });
     for (var seg = curScore.firstMeasure.firstSegment; seg; seg = seg.next) {
         if (seg.segmentType !== Segment.ChordRest) continue;
-        for (var t = 0; t < ntracks; t++) {
+        for (var i = 0; i < tracks.length; i++) {
+            var t = tracks[i];
             var el = seg.elementAt(t);
             if (!el || el.type !== Element.CHORD) continue;
             findDegreeLyrics(el).forEach(function (l) {
