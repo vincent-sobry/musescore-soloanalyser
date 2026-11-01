@@ -29,7 +29,7 @@ MuseScore {
     readonly property var pluginName: qsTr("Live")
 
     title: "Solo Analyser Live"
-    thumbnailName: "logoSoloAnalyserInteractive.png"
+    thumbnailName: "logoSoloAnalyserLive.png"
     categoryCode: "color-notes"
 
     pluginType: "dialog"
