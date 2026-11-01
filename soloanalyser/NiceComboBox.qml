@@ -6,9 +6,11 @@ import QtQuick.Controls 2.2
 // v1.1.2: disabled color
 // v1.1.3: new Select function
 // v1.1.3: bug if text is undefined
+// v1.2.0: colours of MuseScore's theme when available (MuseScore 4), of the system otherwise (text, background, arrow, list)
 
 ComboBox {
     id: control
+    readonly property bool themed: (typeof ui !== "undefined") && !!ui && !!ui.theme
 
     model: []
 	
@@ -19,20 +21,63 @@ ComboBox {
         contentItem: Text {
             text: modelData[textRole]
             anchors.verticalCenter: parent.verticalCenter
+            color: control.themed ? ui.theme.fontPrimaryColor : sysActivePalette.text
         }
         highlighted: control.highlightedIndex === index
+        background: Rectangle {
+            color: parent.highlighted ? (control.themed ? ui.theme.accentColor : sysActivePalette.highlight) : "transparent"
+            opacity: control.themed ? ui.theme.accentOpacityNormal : 0.5
+        }
     }
 
     contentItem: Text {
 
         text: (control.model[control.currentIndex])?control.model[control.currentIndex][textRole]:"--"
         anchors.verticalCenter: parent.verticalCenter
-        color: (control.enabled)?sysActivePalette.text:sysActivePalette.mid
+        color: control.themed ? ui.theme.fontPrimaryColor : sysActivePalette.buttonText
+        opacity: control.enabled ? 1.0 : 0.5
         leftPadding: 10
         rightPadding: 10
         topPadding: 5
         bottomPadding: 5
         verticalAlignment: Text.AlignVCenter
+    }
+
+    background: Rectangle {
+        implicitWidth: 120
+        implicitHeight: 32
+        radius: 3
+        color: control.themed ? ui.theme.buttonColor : sysActivePalette.button
+        opacity: control.themed ? (control.hovered ? ui.theme.buttonOpacityHover : ui.theme.buttonOpacityNormal) : 1.0
+        border.width: control.visualFocus ? 2 : 0
+        border.color: control.themed ? ui.theme.focusColor : sysActivePalette.highlight
+    }
+
+    indicator: Canvas {
+        id: arrow
+        x: control.width - width - control.rightPadding
+        y: control.topPadding + (control.availableHeight - height) / 2
+        width: 12
+        height: 8
+        readonly property color arrowColor: control.themed ? ui.theme.fontPrimaryColor : sysActivePalette.buttonText
+        onArrowColorChanged: requestPaint()
+        onPaint: {
+            var ctx = getContext("2d");
+            ctx.reset();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(width, 0);
+            ctx.lineTo(width / 2, height);
+            ctx.closePath();
+            ctx.fillStyle = arrowColor;
+            ctx.fill();
+        }
+        opacity: control.enabled ? 1.0 : 0.5
+    }
+
+    popup.background: Rectangle {
+        color: control.themed ? ui.theme.popupBackgroundColor : sysActivePalette.window
+        border.color: control.themed ? ui.theme.strokeColor : sysActivePalette.mid
+        radius: 3
     }
 
     FontMetrics {
