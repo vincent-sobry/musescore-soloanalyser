@@ -50,6 +50,8 @@ import "core.js" as Core
 /*  - 1.5.1: MU4.4+ Compatibility
 /*  - 1.5.1: CR: Chord name can be "WT0" and "WT1
 /*  - 1.5.1: Improvments: See core.js 1.2.12
+/*  - 1.5.2: "Save" button, saving the options without analysing the score
+/*  - 1.5.2: Bug: invalid stored options are replaced by the default ones
 /**********************************************/
 
 MuseScore {
@@ -79,6 +81,30 @@ MuseScore {
     }
 
     onRun: {
+        // 0) Replace invalid stored values (stored by plugins declaring these settings without a value)
+        var defs = {
+            "rootColor": Core.defRootColor,
+            "bassColor": Core.defBassColor,
+            "chordColor": Core.defChordColor,
+            "scaleColor": Core.defScaleColor,
+            "alteredColor": Core.defAlteredColor,
+            "colorNotes": Core.defColorNotes,
+            "nameNotes": Core.defNameNotes,
+            "textType": Core.defTextType,
+            "useBelowSymbols": Core.defUseBelowSymbols,
+            "useAboveSymbols": Core.defUseAboveSymbols,
+            "lookAhead": Core.defLookAhead,
+            "lookBack": Core.defLookBack,
+            "ignoreBrackettedChords": Core.defIgnoreBrackettedChords
+        };
+        for (var k in defs) {
+            var v = settings.value(k);
+            if (v === undefined || v === null || v === "") {
+                settings[k] = defs[k];
+                settings.setValue(k, defs[k]);
+            }
+        }
+
         // 1) Read config file
         // AUTOMATIC
 
@@ -101,6 +127,27 @@ MuseScore {
         chkLookBack.checked = settings.lookBack;
         chkIgnoreBrackettedChords.checked = settings.ignoreBrackettedChords;*/
 
+    }
+
+    // push values to backend (saving is automatic)
+    function pushSettings() {
+        settings.rootColor = rootColorChosser.color;
+        settings.bassColor = bassColorChosser.color;
+        settings.chordColor = chordColorChosser.color;
+        settings.scaleColor = scaleColorChosser.color;
+        settings.alteredColor = alteredColorChosser.color;
+        // settings.errorColor = errorColorChosser.color;
+
+        settings.colorNotes = get(lstColorNote);
+
+        settings.nameNotes = get(lstNameNote);
+        settings.textType = get(lstFormText);
+
+        settings.useBelowSymbols = chkUseBelowSymbols.checked;
+        settings.useAboveSymbols = chkUseAboveSymbols.checked;
+        settings.lookAhead = chkLookAhead.checked;
+        settings.lookBack = chkLookBack.checked;
+        settings.ignoreBrackettedChords = chkIgnoreBrackettedChords.checked;
     }
 
     function select(control, value) {
@@ -481,6 +528,14 @@ MuseScore {
                     id: btnApply
                     DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
                 }
+                CompatibleButton {
+                    text: qsTranslate("GenericUI", "Save")
+                    id: btnSave
+                    DialogButtonBox.buttonRole: DialogButtonBox.ApplyRole
+                    hoverEnabled: true
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTranslate("GenericUI", "Save the options without analysing the score")
+                }
                 /*CompatibleButton {
                 text: qsTranslate("GenericUI", "Apply")
                 id: btnApplyNoStore
@@ -499,34 +554,16 @@ MuseScore {
 
                 onClicked: function (button) {
                     console.log("~~~~~~~~~~~~" + button.text + "~~~~~~~~~~~~");
-                    if (button == btnClear) {
+                    if (button == btnSave) {
+                        pushSettings();
+                        mainWindow.parent.Window.window.close();
+                    } else if (button == btnClear) {
                         Core.clearAnalyse();
                         //Qt.quit();
                         mainWindow.parent.Window.window.close();
                     } else if ((button == btnApply) /*|| (button==btnApplyNoStore)*/) {
                         if (button == btnApply) {
-                            // push values to backend
-                            settings.rootColor = rootColorChosser.color;
-                            settings.bassColor = bassColorChosser.color;
-                            settings.chordColor = chordColorChosser.color;
-                            settings.scaleColor = scaleColorChosser.color;
-                            settings.alteredColor = alteredColorChosser.color;
-                            // settings.errorColor = errorColorChosser.color;
-
-                            settings.colorNotes = get(lstColorNote);
-
-                            settings.nameNotes = get(lstNameNote);
-                            settings.textType = get(lstFormText);
-
-                            settings.useBelowSymbols = chkUseBelowSymbols.checked;
-                            settings.useAboveSymbols = chkUseAboveSymbols.checked;
-                            settings.lookAhead = chkLookAhead.checked;
-                            settings.lookBack = chkLookBack.checked;
-                            settings.ignoreBrackettedChords = chkIgnoreBrackettedChords.checked;
-
-                            // save values
-                            // AUTOMATIC
-
+                            pushSettings();
                         }
 
                         // execute
