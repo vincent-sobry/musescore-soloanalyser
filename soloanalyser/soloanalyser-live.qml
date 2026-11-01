@@ -19,12 +19,14 @@ import "core.js" as Core
 /* ChangeLog:
 /*  - 1.0.0: Initial version
 /*  - 1.1.0: Options taken from "Interactive"; analyse removed from the score when closing
+/*  - 1.2.0: Choice of the parts to analyse; the bar shown as a table of beats, with the short part names,
+/*           the selected note highlighted
 /**********************************************/
 
 MuseScore {
     menuPath: "Plugins.Solo Analyser." + pluginName
     description: "Live panel showing the role of the notes of the current bar relative to the chord symbols."
-    version: "1.1.0"
+    version: "1.2.0"
 
     readonly property var pluginName: qsTr("Live")
 
@@ -33,16 +35,21 @@ MuseScore {
     categoryCode: "color-notes"
 
     pluginType: "dialog"
-    width: 380
-    height: 200
+    width: 460
+    height: 360
 
     id: mainWindow
 
     property int lastFocusTick: -1
+    property var selectedNote: null
     property string lastKey: ""
     property string lastWriteKey: ""
     property bool cleanedUp: false
     readonly property var categories: ["root", "bass", "chord", "altered", "scale", "outside"]
+    // Parts of the score that can be analysed (no drums), and the keys of the ones the user unchecked.
+    // The excluded parts are stored by name, so the choice is kept for the next scores with the same instruments.
+    property var parts: []
+    property var excludedParts: []
 
     // Only one Live panel at a time: two panels would both write in the score, and closing one would
     // clear what the other one keeps writing. The open panel stores a heartbeat in its settings
@@ -61,6 +68,11 @@ MuseScore {
         }
         heartbeat();
         heartbeatTimer.start();
+        try {
+            excludedParts = JSON.parse(liveSettings.value("excludedParts", "[]")) || [];
+        } catch (err) {
+            excludedParts = [];
+        }
         refresh(true);
     }
 
@@ -131,10 +143,37 @@ MuseScore {
         }
     }
 
+    // Only the analysed parts are cleared: the excluded ones may hold an analyse the user wants to keep
     function clearScore() {
         if (!curScore) return;
-        Live.clearScore(categories.map(categoryColor));
+        Live.clearScore(categories.map(categoryColor), includedParts());
         lastWriteKey = "";
+    }
+
+    function includedParts() {
+        return Live.getParts().filter(function (p) {
+            return excludedParts.indexOf(p.key) < 0;
+        }).map(function (p) {
+            return p.key;
+        });
+    }
+
+    function setPartIncluded(key, included) {
+        var ex = excludedParts.filter(function (k) {
+            return k !== key;
+        });
+        if (!included) ex.push(key);
+        excludedParts = ex;
+        liveSettings.setValue("excludedParts", JSON.stringify(ex));
+        // Removing what was written in a part that is no longer analysed
+        if (!included && chkWrite.checked && curScore) {
+            try {
+                Live.clearScore(categories.map(categoryColor), [key]);
+            } catch (err) {
+                console.log("Solo Analyser Live: " + err);
+            }
+        }
+        refresh(true);
     }
 
     function setting(key, def) {
@@ -152,7 +191,8 @@ MuseScore {
             "useAboveSymbols": opt("useAboveSymbols", Core.defUseAboveSymbols),
             "useBelowSymbols": opt("useBelowSymbols", Core.defUseBelowSymbols),
             "lookAhead": opt("lookAhead", Core.defLookAhead),
-            "ignoreBrackettedChords": opt("ignoreBrackettedChords", Core.defIgnoreBrackettedChords)
+            "ignoreBrackettedChords": opt("ignoreBrackettedChords", Core.defIgnoreBrackettedChords),
+            "excludedParts": excludedParts
         };
     }
 
@@ -177,8 +217,18 @@ MuseScore {
             return;
         }
         try {
-            var tick = Live.getSelectionTick();
-            if (tick >= 0) lastFocusTick = tick; // keep the last position when the selection is cleared
+            var ps = Live.getParts().filter(function (p) {
+                return !p.drum;
+            });
+            if (JSON.stringify(ps) !== JSON.stringify(parts)) parts = ps;
+
+            var sel = Live.getSelection();
+            if (sel.tick >= 0) {
+                lastFocusTick = sel.tick; // keep the last position when the selection is cleared
+                selectedNote = sel.note;
+            }
+            // The selected note is highlighted in the table, so selecting another note refreshes the panel
+            var selKey = selectedNote ? lastFocusTick + "/" + selectedNote.track + ":" + selectedNote.pitch : "";
 
             var opts = options();
             var md = modes();
@@ -193,8 +243,8 @@ MuseScore {
             }
             // Only react to changes of notes, chord symbols, bar or options: the labels and colours written
             // by the plugin are not part of the keys, so undoing the plugin's write is not re-applied.
-            if (force || res.key + settingsKey !== lastKey) {
-                lastKey = res.key + settingsKey;
+            if (force || res.key + settingsKey + selKey !== lastKey) {
+                lastKey = res.key + settingsKey + selKey;
                 output.text = render(res);
                 legend.text = categories.map(function (c) {
                     return "<span style='color:" + categoryColor(c) + "'>■ " + c + "</span>";
@@ -244,37 +294,84 @@ MuseScore {
         return ("" + s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    // The bar as a table: one column per beat, one row per part, the chord symbols on top.
+    // The notes of a chord are stacked, top note first; the chords of a beat are side by side.
+    // Thin lines between the parts, the bar number on the chords' line.
     function render(res) {
         var html = "";
         for (var b = 0; b < res.bars.length; b++) {
             var bar = res.bars[b];
             var label = (bar.number === "pickup") ? qsTr("Pickup") : qsTr("Bar") + " " + bar.number;
-            html += "<p style='margin-top:4px; margin-bottom:0px'><b>" + esc(label) + "</b>";
-            if (bar.chords.length > 0) html += " &nbsp;<span style='color:#555555'>" + bar.chords.map(esc).join(" · ") + "</span>";
-            html += "</p>";
+            // The first column is as wide as the longest part name or the bar number, the beats share the rest
+            barMetrics.text = label;
+            var nameWidth = barMetrics.advanceWidth + 8; // + cell padding
+            bar.staves.forEach(function (st) {
+                nameMetrics.text = st.name;
+                nameWidth = Math.max(nameWidth, nameMetrics.advanceWidth + 8);
+            });
+            var namePct = Math.min(40, Math.ceil(100 * nameWidth / Math.max(1, output.width)));
+            var w = Math.floor((100 - namePct) / bar.beats.length);
+            html += "<table width='100%' border='0' cellspacing='0' cellpadding='3' style='border-collapse:collapse'>";
+            html += "<tr><td width='" + namePct + "%'><b style='white-space:nowrap'>" + esc(label) + "</b></td>";
+            bar.beats.forEach(function (bt) {
+                html += "<td width='" + w + "%' align='center'>"
+                    + (bt.chords.length > 0 ? "<b>" + bt.chords.map(esc).join(" ") + "</b>" : "&nbsp;") + "</td>";
+            });
+            html += "</tr>";
             if (bar.staves.length === 0) {
-                html += "<p style='margin:0px 0px 0px 6px; color:#999999'><i>" + qsTr("no notes") + "</i></p>";
-                continue;
+                html += "<tr><td></td><td colspan='" + bar.beats.length + "' style='color:#999999'><i>" + qsTr("no notes") + "</i></td></tr>";
             }
-            for (var s = 0; s < bar.staves.length; s++) {
-                var st = bar.staves[s];
-                html += "<p style='margin:0px 0px 0px 6px'>";
-                if (bar.staves.length > 1)
-                    html += "<span style='color:#555555'>" + esc(st.name) + ":</span> ";
-                for (var e = 0; e < st.events.length; e++) {
-                    var ev = st.events[e];
-                    if (ev.chord !== null) html += "<span style='color:#555555'>[" + esc(ev.chord) + "]</span> ";
-                    if (e > 0 && ev.chord === null && ev.chordName === null && st.events[e - 1].chordName !== null)
-                        html += "<span style='color:#555555'>[–]</span> ";
-                    html += ev.notes.map(function (n) {
-                        var c = categoryColor(n.category);
-                        return "<span style='color:" + c + "'>" + esc(n.name) + (n.degree ? " <b>" + esc(n.degree) + "</b>" : "") + "</span>";
-                    }).join("+") + " &nbsp;";
-                }
-                html += "</p>";
-            }
+            bar.staves.forEach(function (st) {
+                var cells = bar.beats.map(function () {
+                    return [];
+                });
+                st.events.forEach(function (ev) {
+                    var i = 0;
+                    while (i + 1 < bar.beats.length && bar.beats[i + 1].tick <= ev.tick) i++;
+                    cells[i].push(ev);
+                });
+                var line = " style='border-top:1px solid " + lineColor + "'";
+                html += "<tr><td valign='middle'" + line + "><span style='color:#555555; font-size:7pt; white-space:nowrap'>" + esc(st.name) + "</span></td>";
+                cells.forEach(function (evs) {
+                    html += "<td valign='middle' align='center'" + line + ">";
+                    if (evs.length > 0) {
+                        html += "<table align='center' cellspacing='0' cellpadding='0'><tr>";
+                        evs.forEach(function (ev, e) {
+                            html += "<td valign='bottom' align='center' style='padding-left:" + (e > 0 ? 6 : 0) + "px'>" + ev.notes.slice().reverse().map(renderNote).join("<br>") + "</td>";
+                        });
+                        html += "</tr></table>";
+                    }
+                    html += "</td>";
+                });
+                html += "</tr>";
+            });
+            html += "</table>";
         }
         return html;
+    }
+
+    readonly property string lineColor: "#dddddd"
+
+    // The note name small and grey, then the degree large and coloured ("b" for flats: the ♭ sign is too wide in this font)
+    // The selected note is highlighted
+    function renderNote(n) {
+        var sel = selectedNote !== null && ((typeof n.note.is === "function") ? n.note.is(selectedNote) : n.note === selectedNote);
+        var name = esc(n.name.replace(/♭/g, "b"));
+        var html = n.degree
+            ? "<span style='color:#999999; font-size:9pt'>" + name + "</span>&nbsp;<b style='color:" + categoryColor(n.category) + "'>" + esc(n.degree) + "</b>"
+            : "<span style='color:#999999'>" + name + "</span>";
+        return sel ? "<span style='background-color:#ffd54f'>&nbsp;" + html + "&nbsp;</span>" : html;
+    }
+
+    TextMetrics {
+        id: nameMetrics
+        font.pointSize: 7
+    }
+
+    TextMetrics {
+        id: barMetrics
+        font.pointSize: 10
+        font.bold: true
     }
 
     component SmallCheck: CheckBox {
@@ -314,6 +411,42 @@ MuseScore {
                 }
                 Item { Layout.fillWidth: true }
                 ToolButton {
+                    id: btnParts
+                    readonly property int nIncluded: parts.filter(function (p) {
+                        return excludedParts.indexOf(p.key) < 0;
+                    }).length
+                    text: qsTr("Parts") + ((nIncluded < parts.length) ? " " + nIncluded + "/" + parts.length : "") + " ▾"
+                    font.pointSize: 8
+                    implicitHeight: 22
+                    hoverEnabled: true
+                    ToolTip.visible: hovered && !partsPopup.visible
+                    ToolTip.text: qsTr("Choose the parts to analyse")
+                    onClicked: partsPopup.visible ? partsPopup.close() : partsPopup.open()
+
+                    Popup {
+                        id: partsPopup
+                        y: btnParts.height
+                        x: btnParts.width - width
+                        width: 200
+                        height: Math.min(partsList.contentHeight + topPadding + bottomPadding, mainWindow.height - 30)
+                        padding: 4
+
+                        ListView {
+                            id: partsList
+                            anchors.fill: parent
+                            clip: true
+                            model: parts
+                            ScrollBar.vertical: ScrollBar {}
+                            delegate: SmallCheck {
+                                width: partsList.width
+                                text: modelData.name
+                                checked: excludedParts.indexOf(modelData.key) < 0
+                                onToggled: setPartIncluded(modelData.key, checked)
+                            }
+                        }
+                    }
+                }
+                ToolButton {
                     text: "↻"
                     font.pointSize: 9
                     implicitWidth: 24
@@ -349,11 +482,14 @@ MuseScore {
                 clip: true
                 contentWidth: width
                 contentHeight: output.paintedHeight
-                ScrollBar.vertical: ScrollBar {}
+                ScrollBar.vertical: ScrollBar {
+                    policy: (flick.contentHeight > flick.height) ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+                }
 
                 Text {
                     id: output
-                    width: flick.width
+                    width: flick.width - ((flick.contentHeight > flick.height) ? 10 : 0)
+                    onWidthChanged: lastKey = "" // the parts column width depends on it: rendered again at the next poll
                     textFormat: Text.RichText
                     wrapMode: Text.WordWrap
                     color: "#222222"
