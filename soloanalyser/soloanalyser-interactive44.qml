@@ -52,12 +52,13 @@ import "core.js" as Core
 /*  - 1.5.1: Improvments: See core.js 1.2.12
 /*  - 1.5.2: "Save" button, saving the options without analysing the score
 /*  - 1.5.2: Bug: invalid stored options are replaced by the default ones
+/*  - 1.5.3: Follows MuseScore's light/dark theme
 /**********************************************/
 
 MuseScore {
     menuPath: "Plugins.Solo Analyser." + pluginName
     description: "Colors and names the notes based on their role if chords/harmonies."
-    version: "1.5.1"
+    version: "1.5.3"
 
     readonly property var pluginName: qsTr("Interactive")
 
@@ -199,7 +200,7 @@ MuseScore {
         columns: 2
         columnSpacing: 5
 
-        GroupBox {
+        NiceGroupBox {
             title: qsTranslate("GenericUI", "Rendering options...")
             //Layout.margins: 5
             Layout.alignment: Qt.AlignTop | Qt.AlignLeft
@@ -392,7 +393,7 @@ MuseScore {
             }
         }
 
-        GroupBox {
+        NiceGroupBox {
             title: qsTranslate("GenericUI", "Analyze options...")
             Layout.alignment: Qt.AlignTop | Qt.AlignRight
             GridLayout {
@@ -614,6 +615,16 @@ MuseScore {
         width: 300
         height: 200
 
+        background: Rectangle {
+            color: ui.theme.popupBackgroundColor
+            border.color: ui.theme.strokeColor
+        }
+        header: NiceLabel {
+            text: colorDialog.title
+            font.bold: true
+            padding: 12
+        }
+
         ColumnLayout {
             id: colorDialogGrid
             anchors.margins: 2
@@ -627,6 +638,14 @@ MuseScore {
                 text: (colorDialog.color) ? colorDialog.color : ""
                 enabled: true
                 placeholderText: "#000000"
+                color: ui.theme.fontPrimaryColor
+                placeholderTextColor: ui.theme.fontSecondaryColor
+                background: Rectangle {
+                    implicitHeight: 30
+                    color: ui.theme.textFieldColor
+                    border.color: ui.theme.strokeColor
+                    radius: 3
+                }
             }
 
             DialogButtonBox {

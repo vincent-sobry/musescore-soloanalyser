@@ -4,9 +4,11 @@ import QtQuick.Controls 2.2
 /**
  * 1.0: initial
  * 1.1: tweak colours in dark mode
+ * 1.2: colours of MuseScore's theme when available (MuseScore 4), of the system otherwise
  */
 RadioButton {
     id: control
+    readonly property bool themed: (typeof ui !== "undefined") && !!ui && !!ui.theme
     
     width: 200
     
@@ -16,7 +18,8 @@ RadioButton {
         x: control.leftPadding
         y: parent.height / 2 - height / 2
         radius: 13
-        border.color: control.down ? "#555555" : "#929292"
+        color: control.themed ? ui.theme.textFieldColor : sysActivePalette.base
+        border.color: control.themed ? ui.theme.strokeColor : (control.down ? "#555555" : "#929292")
 
         Rectangle {
             width: 10
@@ -24,7 +27,7 @@ RadioButton {
             x: 5
             y: 5
             radius: 7
-            color: control.down ? "#555555" : "black"
+            color: control.themed ? ui.theme.fontPrimaryColor : (control.down ? "#555555" : "black")
             visible: control.checked
         }
     }
@@ -33,7 +36,7 @@ RadioButton {
         text: control.text
         font: control.font
         opacity: enabled ? 1.0 : 0.3
-        color: sysActivePalette.text
+        color: control.themed ? ui.theme.fontPrimaryColor : sysActivePalette.text
         verticalAlignment: Text.AlignVCenter
         leftPadding: control.indicator.width + control.spacing
     }
