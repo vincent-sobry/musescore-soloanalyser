@@ -4,11 +4,15 @@ import QtQuick.Controls 2.2
 /**
  * 1.1: set default leftPadding to 0 and stop adding 2 at the left of the indicator
  * 1.2: tweak colours in dark mode
+ * 1.3: colours of MuseScore's theme when available (MuseScore 4), of the system otherwise
  */
 CheckBox {
     id: control
     property alias boxWidth: box.implicitWidth
     leftPadding : 0
+    readonly property bool themed: (typeof ui !== "undefined") && !!ui && !!ui.theme
+    readonly property color textColor: themed ? ui.theme.fontPrimaryColor : sysActivePalette.text
+    onTextColorChanged: drawingCanvas.requestPaint()
 
 
     indicator: Rectangle {
@@ -17,7 +21,8 @@ CheckBox {
         implicitHeight: implicitWidth
         x: control.leftPadding
         y: parent.height / 2 - height / 2
-        border.color: "grey"
+        color: control.themed ? ui.theme.textFieldColor : sysActivePalette.base
+        border.color: control.themed ? ui.theme.strokeColor : "grey"
 
         
 
@@ -38,7 +43,8 @@ CheckBox {
                     var ctx = getContext("2d");
 
                     ctx.lineWidth = Math.max(1.5,box.implicitWidth * 0.05);
-                    ctx.strokeStyle = control.color; //"black";
+                    ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                    ctx.strokeStyle = control.textColor;
                     ctx.beginPath();
                     ctx.moveTo(0, 0);
                     ctx.lineTo(drawingCanvas.width, drawingCanvas.height);
@@ -57,7 +63,7 @@ CheckBox {
         text: control.text
         font: control.font
         opacity: enabled ? 1.0 : 0.3
-        color: sysActivePalette.text
+        color: control.textColor
         verticalAlignment: Text.AlignVCenter
         leftPadding: control.indicator.width + control.spacing
     }
