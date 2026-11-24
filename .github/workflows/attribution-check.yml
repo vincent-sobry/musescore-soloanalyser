@@ -1,0 +1,41 @@
+name: Attribution check
+
+# Fails when a commit has a Claude Co-Authored-By or Claude-Session trailer,
+# or when the PR description has the Claude Code footer or a session URL.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check pull request commits and description
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: sh .github/scripts/check-attribution.sh "$BASE..$HEAD"
+
+      - name: Check pushed commits
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            sh .github/scripts/check-attribution.sh -1 "$AFTER"
+          else
+            sh .github/scripts/check-attribution.sh "$BEFORE..$AFTER"
+          fi
